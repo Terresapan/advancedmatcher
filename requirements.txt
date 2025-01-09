@@ -1,0 +1,14 @@
+streamlit
+git+https://github.com/streamlit/gsheets-connection
+pandasql  # this is for example/st_app.py only
+st-gsheets-connection
+langchain-groq
+langchain
+langsmith
+langchain-openai
+langchain-community
+faiss-cpu
+
+pypdf2
+docx
+python-docx
