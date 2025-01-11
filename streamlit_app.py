@@ -17,36 +17,40 @@ def setup_sidebar():
     """Setup the sidebar with instructions and feedback form."""
     st.sidebar.header("🤝 Project-Consultant Matcher")
     st.sidebar.markdown(
-        "This app helps you find the most suitable consultants for your project based on your project description and the consultant's expertise. "
-        "To use this app, you'll need to first enter password to access the app."
+        "This app helps you find suitable consultants for your project based on "
+        "project description and consultant expertise."
     )
+    
     st.sidebar.write("### Instructions")
-    st.sidebar.write(":pencil: Upload your project description and Find Best Consultants.")
-    st.sidebar.write(":point_right: Feel free to chat with our consultant database in the Text Query session.")
-    st.sidebar.write(":heart_decoration: Let me know your thoughts and feedback about the app.")
+    st.sidebar.write(
+        "1. :key: Enter password to access the app\n"
+        "2. :pencil: Upload project description or use Text Query\n"
+        "3. :mag: Review matched consultants and analyses\n"
+        "4. :speech_balloon: Chat with our consultant database"
+    )
 
-    # Initialize feedback session state
+    # Feedback section
     if 'feedback' not in st.session_state:
         st.session_state.feedback = ""
 
-    # Feedback form
-    st.sidebar.subheader("Feedback Form")
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💭 Feedback")
     feedback = st.sidebar.text_area(
-        "Your thoughts and feedback", 
-        value=st.session_state.feedback, 
-        placeholder="Share your feedback here..."
+        "Share your thoughts",
+        value=st.session_state.feedback,
+        placeholder="Your feedback helps us improve..."
     )
 
-    if st.sidebar.button("Submit Feedback"):
+    if st.sidebar.button("📤 Submit Feedback"):
         if feedback:
             try:
                 save_feedback(feedback)
-                st.session_state.feedback = ""  # Clear feedback after submission
-                st.sidebar.success("Thank you for your feedback! 😊")
+                st.session_state.feedback = ""
+                st.sidebar.success("✨ Thank you for your feedback!")
             except Exception as e:
-                st.sidebar.error(f"Error saving feedback: {str(e)}")
+                st.sidebar.error(f"❌ Error saving feedback: {str(e)}")
         else:
-            st.sidebar.error("Please enter your feedback before submitting.")
+            st.sidebar.warning("⚠️ Please enter feedback before submitting")
 
     st.sidebar.image("assets/TAP01.jpg", use_container_width=True)
 
@@ -77,7 +81,7 @@ def main():
                     with st.spinner('⚙️ Processing project document...'):
                         project_summary = generate_project_summary(file_text)
                         st.session_state.project_summary = project_summary
-                        st.write("**Project Summary:**")
+                        st.write("**📋 Project Summary:**")
                         st.write(project_summary)
                         
                         embeddings = get_embeddings()
@@ -94,15 +98,15 @@ def main():
                                             with st.expander(f"👨‍💼 Consultant {i}: {consultant['Name']}"):
                                                 cols = st.columns(2)
                                                 with cols[0]:
-                                                    st.markdown(f"**Age:** {consultant['Age']}")
-                                                    st.markdown(f"**Education:** {consultant['Education']}")
-                                                    st.markdown(f"**Domain:** {consultant['Domain']}")
+                                                    st.markdown(f"**👤 Age:** {consultant['Age']}")
+                                                    st.markdown(f"**🎓 Education:** {consultant['Education']}")
+                                                    st.markdown(f"**💼 Domain:** {consultant['Domain']}")
                                                 with cols[1]:
-                                                    st.markdown(f"**Availability:** {consultant['Availability']}")
-                                                    st.markdown(f"**Bio:** {consultant['Bio']}")
+                                                    st.markdown(f"**📅 Availability:** {consultant['Availability']}")
+                                                    st.markdown(f"**📝 Bio:** {consultant['Bio']}")
                                                 
                                                 st.markdown("---")
-                                                st.markdown("**Match Analysis:**")
+                                                st.markdown("**🔍 Match Analysis:**")
                                                 st.markdown(consultant['Match Analysis'])
                                     else:
                                         st.error("😔 No matching consultants found.")
@@ -122,14 +126,14 @@ def main():
                 st.markdown(message["content"])
 
         # Chat input
-        if prompt := st.chat_input("Ask about consultant matching..."):
+        if prompt := st.chat_input("💭 Ask about consultant matching..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             
             with st.chat_message("user"):
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
+                with st.spinner("🤔 Thinking..."):
                     # Get embeddings and vector store for context
                     embeddings = get_embeddings()
                     consultant_df = load_consultant_data()
