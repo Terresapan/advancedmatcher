@@ -73,6 +73,7 @@ def create_consultant_vector_store(_embeddings, df):
         return None
     try:
         df.columns = ['Name', 'Age', 'Education', 'Domain', 'Bio', 'Availability']
+        # available_df = df[df['Availability'].str.lower().isin(['yes', 'y', 'available'])]
         text_data = [
             f"Name: {name}; Age: {age}; Education: {education}; Domain: {domain}; Bio: {bio}; Availability: {availability}"
             for name, age, education, domain, bio, availability in zip(
@@ -110,7 +111,7 @@ def analyze_consultant_match(project_summary, consultant_details, prompt=CONSULT
 @traceable(
         run_type="retriever"
 )
-def find_best_consultant_matches(vector_store, project_summary, top_k=5):
+def find_best_consultant_matches(vector_store, project_summary, top_k=3):
     """Find the best consultant matches based on project summary"""
     if not vector_store:
         return []

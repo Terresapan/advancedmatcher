@@ -53,6 +53,7 @@ def setup_sidebar():
             st.sidebar.warning("⚠️ Please enter feedback before submitting")
 
     st.sidebar.image("assets/TAP01.jpg", use_container_width=True)
+      
 
 # Main Streamlit app
 def main():
@@ -71,6 +72,29 @@ def main():
         # File upload and processing section
         uploaded_file = st.file_uploader("Upload Project Document", type=["pdf", "docx", "txt"])
         
+        # Display stored results if they exist
+        if 'project_summary' in st.session_state:
+            st.write("**📋 Project Summary:**")
+            st.write(st.session_state.project_summary)
+            
+            if 'current_matches' in st.session_state and st.session_state.current_matches:
+                st.write("🎯 **Best Matching Consultants**")
+                for i, consultant in enumerate(st.session_state.current_matches, 1):
+                    with st.expander(f"👨‍💼 Consultant {i}: {consultant['Name']}"):
+                        cols = st.columns(2)
+                        with cols[0]:
+                            st.markdown(f"**👤 Age:** {consultant['Age']}")
+                            st.markdown(f"**🎓 Education:** {consultant['Education']}")
+                            st.markdown(f"**💼 Domain:** {consultant['Domain']}")
+                        with cols[1]:
+                            st.markdown(f"**📅 Availability:** {consultant['Availability']}")
+                            st.markdown(f"**📝 Bio:** {consultant['Bio']}")
+                        
+                        st.markdown("---")
+                        st.markdown("**🔍 Match Analysis:**")
+                        st.markdown(consultant['Match Analysis'])
+        
+        # Process new file upload if provided
         if uploaded_file is not None:
             file_text = process_uploaded_file(uploaded_file)
             
