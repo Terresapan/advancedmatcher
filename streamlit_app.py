@@ -10,12 +10,12 @@ from main import (
 from utils import check_password, save_feedback, load_consultant_data
 
 # Streamlit UI setup
-st.set_page_config(page_title="Project-Consultant Matcher", layout="wide", page_icon="🤝")
+st.set_page_config(page_title="SmartMatch Staffing Platform", layout="wide", page_icon="🤝")
 
 # Setup sidebar with instructions and feedback form
 def setup_sidebar():
     """Setup the sidebar with instructions and feedback form."""
-    st.sidebar.header("🤝 Project-Consultant Matcher")
+    st.sidebar.header("🤝 SmartMatch Staffing Platform")
     st.sidebar.markdown(
         "This app helps you find suitable consultants for your project based on "
         "project description and consultant expertise."
