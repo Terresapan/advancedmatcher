@@ -52,7 +52,7 @@ def setup_sidebar():
         else:
             st.sidebar.warning("⚠️ Please enter feedback before submitting")
 
-    st.sidebar.image("assets/TAP01.jpg", use_container_width=True)
+    st.sidebar.image("assets/logo01.jpg", use_container_width=True)
       
 
 # Main Streamlit app
