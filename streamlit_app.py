@@ -151,8 +151,8 @@ def main():
                     # Get embeddings and vector store for context
                     embeddings = get_embeddings()
                     consultant_df = load_consultant_data()
-                    vector_store = sync_consultant_data_to_supabase(embeddings, consultant_df)
-                    if vector_store:
+                    sync_success = sync_consultant_data_to_supabase(consultant_df, embeddings)
+                    if sync_success:
                         response = chat_with_consultant_database(prompt, embeddings, consultant_df)
                         st.markdown(response)
                         st.session_state.messages.append({"role": "assistant", "content": response})

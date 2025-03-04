@@ -100,7 +100,7 @@ def build_text_data(row):
             f"Marketing Expertise: {row.get('Marketing Expertise', 'Unknown')}; "
             f"Entrepreneurship Expertise: {row.get('Entrepreneurship Expertise', 'Unknown')}; "
             f"Education: {row.get('Education', 'Unknown')}; "
-            f"Industry Expertise: {row.get('Industry Expertise', 'Unknown')}; "  # Changed from Domain
+            f"Industry Expertise: {row.get('Industry Expertise', 'Unknown')}; "
             f"Bio: {row.get('Bio', 'Unknown')}; "
             f"Anticipated Availability Date: {row.get('Anticipated Availability Date', 'Unknown')}; "
             f"Availability: {row.get('Availability', 'Unknown')};")
