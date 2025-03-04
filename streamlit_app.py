@@ -1,13 +1,23 @@
 import streamlit as st
+import os
 from main import (
     generate_project_summary,
     get_embeddings,
-    create_consultant_vector_store,
     find_best_consultant_matches,
     process_uploaded_file,
-    chat_with_consultant_database
 )
+from chat import chat_with_consultant_database
+from database import sync_consultant_data_to_supabase
 from utils import check_password, save_feedback, load_consultant_data
+
+
+# Set API keys from Streamlit secrets
+os.environ["GOOGLE_API_KEY"] = st.secrets["llmapikey"]["GOOGLE_API_KEY"]
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = st.secrets["tracing"]["LANGCHAIN_API_KEY"]
+os.environ["LANGCHAIN_ENDPOINT"]="https://api.smith.langchain.com"
+os.environ["LANGCHAIN_PROJECT"] = "Project-Consultant-Matcher-test"
+
 
 # Streamlit UI setup
 st.set_page_config(page_title="SmartMatch Staffing Platform", layout="wide", page_icon="🤝")
@@ -28,6 +38,8 @@ def setup_sidebar():
         "3. :mag: Review matched consultants and analyses\n"
         "4. :speech_balloon: Chat with our consultant database"
     )
+
+    # st.sidebar.write("### 🎧 Listen to our Podcast for more insights")
 
     # Feedback section
     if 'feedback' not in st.session_state:
@@ -52,8 +64,8 @@ def setup_sidebar():
         else:
             st.sidebar.warning("⚠️ Please enter feedback before submitting")
 
-    st.sidebar.image("assets/logo01.jpg", use_container_width=True)
-      
+    st.sidebar.image("assets/bot01.jpg", use_container_width=True)
+
 
 # Main Streamlit app
 def main():
@@ -72,28 +84,6 @@ def main():
         # File upload and processing section
         uploaded_file = st.file_uploader("Upload Project Document", type=["pdf", "docx", "txt"])
         
-        # Display stored results if they exist
-        if 'project_summary' in st.session_state:
-            st.write("**📋 Project Summary:**")
-            st.write(st.session_state.project_summary)
-            
-            if 'current_matches' in st.session_state and st.session_state.current_matches:
-                st.write("🎯 **Best Matching Consultants**")
-                for i, consultant in enumerate(st.session_state.current_matches, 1):
-                    with st.expander(f"👨‍💼 Consultant {i}: {consultant['Name']}"):
-                        cols = st.columns(2)
-                        with cols[0]:
-                            st.markdown(f"**👤 Age:** {consultant['Age']}")
-                            st.markdown(f"**🎓 Education:** {consultant['Education']}")
-                            st.markdown(f"**💼 Domain:** {consultant['Domain']}")
-                        with cols[1]:
-                            st.markdown(f"**📅 Availability:** {consultant['Availability']}")
-                            st.markdown(f"**📝 Bio:** {consultant['Bio']}")
-                        
-                        st.markdown("---")
-                        st.markdown("**🔍 Match Analysis:**")
-                        st.markdown(consultant['Match Analysis'])
-        
         # Process new file upload if provided
         if uploaded_file is not None:
             file_text = process_uploaded_file(uploaded_file)
@@ -111,10 +101,10 @@ def main():
                         embeddings = get_embeddings()
                         consultant_df = load_consultant_data()
                         if consultant_df is not None:
-                            vector_store = create_consultant_vector_store(embeddings, consultant_df)
-                            if vector_store:
+                            sync_success = sync_consultant_data_to_supabase(consultant_df, embeddings)
+                            if sync_success:
                                 with st.spinner('🔍 Finding best consultant matches...'):
-                                    matches = find_best_consultant_matches(vector_store, project_summary)
+                                    matches = find_best_consultant_matches(embeddings, project_summary)
                                     st.session_state.current_matches = matches
                                     if matches:
                                         st.write("🎯 **Best Matching Consultants**")
@@ -124,7 +114,7 @@ def main():
                                                 with cols[0]:
                                                     st.markdown(f"**👤 Age:** {consultant['Age']}")
                                                     st.markdown(f"**🎓 Education:** {consultant['Education']}")
-                                                    st.markdown(f"**💼 Domain:** {consultant['Domain']}")
+                                                    st.markdown(f"**💼 Industry Expertise:** {consultant['Industry Expertise']}")
                                                 with cols[1]:
                                                     st.markdown(f"**📅 Availability:** {consultant['Availability']}")
                                                     st.markdown(f"**📝 Bio:** {consultant['Bio']}")
@@ -135,7 +125,7 @@ def main():
                                     else:
                                         st.error("😔 No matching consultants found.")
                             else:
-                                st.error("❌ Could not create consultant vector store")
+                                st.error("❌ Could not sync consultant data to Supabase")
                         else:
                             st.error("❌ Could not load consultant data")
 
@@ -161,13 +151,15 @@ def main():
                     # Get embeddings and vector store for context
                     embeddings = get_embeddings()
                     consultant_df = load_consultant_data()
-                    vector_store = create_consultant_vector_store(embeddings, consultant_df)
+                    vector_store = sync_consultant_data_to_supabase(embeddings, consultant_df)
                     if vector_store:
-                        response = chat_with_consultant_database(prompt, vector_store)
+                        response = chat_with_consultant_database(prompt, embeddings, consultant_df)
                         st.markdown(response)
                         st.session_state.messages.append({"role": "assistant", "content": response})
                     else:
                         st.error("Could not create consultant vector store")
+
+            sentiment_mapping = [":material/thumb_down:", ":material/thumb_up:"]
 
 if __name__ == "__main__":
     main()

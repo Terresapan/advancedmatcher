@@ -1,5 +1,6 @@
 import gspread
 import json
+import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 import streamlit as st
 import hmac
@@ -26,7 +27,7 @@ def save_feedback(feedback_text):
 
     # Open the Google Sheet
     sheet_id = '1qnFzZZ7YI-9pXj3iAXafjRmC_EIQyK9gA98AjMv29DM'
-    sheet = client.open_by_key(sheet_id).worksheet("feedback")
+    sheet = client.open_by_key(sheet_id).worksheet("matchingapp")
     sheet.append_row([feedback_text])
        
     
@@ -95,8 +96,71 @@ def load_consultant_data():
     try:
         from streamlit_gsheets import GSheetsConnection
         conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(worksheet="Database", ttl="10m", usecols=[0, 1, 2, 3, 4, 5], nrows=1000)
+        df = conn.read(
+            worksheet="Database", 
+            ttl="10m", 
+            usecols=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 
+            nrows=100
+        )
+        
+        # Print original column names for debugging
+        # st.write("Original Google Sheet columns:", list(df.columns))
+        
+        # Create a mapping dictionary from original column names to database field names
+        column_mapping = {
+            # Map based on your actual Google Sheet column names
+            'Name': 'name',
+            'Age': 'age',
+            'Finance Expertise': 'finance_expertise',
+            'Strategy Expertise': 'strategy_expertise',
+            'Operations Expertise': 'operations_expertise',
+            'Marketing Expertise': 'marketing_expertise',
+            'Entrepreneurship Expertise': 'entrepreneurship_expertise',
+            'Education': 'education',
+            'Industry Expertise': 'industry_expertise',
+            'Bio': 'bio',
+            'Anticipated Availability Date': 'anticipated_availability_date',
+            'Availability': 'availability',
+        }
+        
+        # Rename columns based on mapping
+        for original, new_name in column_mapping.items():
+            if original in df.columns:
+                df = df.rename(columns={original: new_name})
+        
+        # Convert date format from MM/DD/YYYY to YYYY-MM-DD if needed
+        if 'anticipated_availability_date' in df.columns:
+            df['anticipated_availability_date'] = pd.to_datetime(
+                df['anticipated_availability_date'], 
+                errors='coerce'
+            ).dt.strftime('%Y-%m-%d')
+        
+        # Original Google Sheet boolean column names
+        boolean_cols = [col for col in df.columns if col in [
+            'finance_expertise', 'strategy_expertise', 'operations_expertise',
+            'marketing_expertise', 'entrepreneurship_expertise', 'availability'
+        ]]
+        
+        # Convert boolean columns
+        for col in boolean_cols:
+            if col in df.columns:
+                df[col] = df[col].map({'TRUE': True, 'FALSE': False, 
+                                       'Yes': True, 'No': False,
+                                       True: True, False: False})
+        
+        # Remove duplicate rows
+        df = df.drop_duplicates()
+
+        # Convert 'age' to nullable integer
+        if 'age' in df.columns:
+            df['age'] = pd.to_numeric(df['age'], errors='coerce')  # Converts strings/floats to numbers, invalid to NaN
+            df['age'] = df['age'].astype('Int64')
+        
+        # Show the processed DataFrame columns
+        # st.write("Processed columns:", list(df.columns))
+        
         return df
+    
     except Exception as e:
         st.error(f"❌ Error loading consultant data: {e}")
         return None

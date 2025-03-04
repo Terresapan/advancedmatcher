@@ -6,10 +6,13 @@ oauth2client
 st-gsheets-connection
 langchain-groq
 langchain
+langgraph
 langsmith
 langchain-openai
+langchain-google-genai
 langchain-community
 faiss-cpu
+supabase
 
 pypdf2
 docx
