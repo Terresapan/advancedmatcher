@@ -1,4 +1,4 @@
-PROJECT_SUMMARY_PROMPT = """Extract and structure the following information from the project document:
+PROJECT_SUMMARY_PROMPT = """Extract and structure the following information from the project document within 100 words:
     1. Project Name: Create one according to the context if not given
     2. Project Scope
     3. Client Expectations

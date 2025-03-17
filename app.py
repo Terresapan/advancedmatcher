@@ -1,9 +1,9 @@
 import streamlit as st
 import os
 from main import (
-    generate_response,
+    generate_project_summary,
     get_embeddings,
-    chat_with_project_consultant_matching,
+    find_best_consultant_matches,
     process_uploaded_file,
 )
 from chat import chat_with_consultant_database
@@ -93,19 +93,37 @@ def main():
                 st.markdown("---")
                 if st.button("✨ Find Best Consultants", key="find_consultants"):
                     with st.spinner('⚙️ Processing project document...'):
-                        # Use the LangGraph-based project-consultant matching
+                        project_summary = generate_project_summary(file_text)
+                        st.session_state.project_summary = project_summary
+                        st.write("**📋 Project Summary:**")
+                        st.write(project_summary)
+                        
                         embeddings = get_embeddings()
                         consultant_df = load_consultant_data()
                         if consultant_df is not None:
                             sync_success = sync_consultant_data_to_supabase(consultant_df, embeddings)
                             if sync_success:
                                 with st.spinner('🔍 Finding best consultant matches...'):
-                                    # Use the LangGraph-based implementation
-                                    response = chat_with_project_consultant_matching(file_text, embeddings)
-                                    
-                                    # Display the response
-                                    st.write("**📋 Project Analysis and Consultant Matches:**")
-                                    st.write(response)
+                                    matches = find_best_consultant_matches(embeddings, project_summary)
+                                    st.session_state.current_matches = matches
+                                    if matches:
+                                        st.write("🎯 **Best Matching Consultants**")
+                                        for i, consultant in enumerate(matches, 1):
+                                            with st.expander(f"👨‍💼 Consultant {i}: {consultant['Name']}"):
+                                                cols = st.columns(2)
+                                                with cols[0]:
+                                                    st.markdown(f"**👤 Age:** {consultant['Age']}")
+                                                    st.markdown(f"**🎓 Education:** {consultant['Education']}")
+                                                    st.markdown(f"**💼 Industry Expertise:** {consultant['Industry Expertise']}")
+                                                with cols[1]:
+                                                    st.markdown(f"**📅 Availability:** {consultant['Availability']}")
+                                                    st.markdown(f"**📝 Bio:** {consultant['Bio']}")
+                                                
+                                                st.markdown("---")
+                                                st.markdown("**🔍 Match Analysis:**")
+                                                st.markdown(consultant['Match Analysis'])
+                                    else:
+                                        st.error("😔 No matching consultants found.")
                             else:
                                 st.error("❌ Could not sync consultant data to Supabase")
                         else:
@@ -135,7 +153,6 @@ def main():
                     consultant_df = load_consultant_data()
                     sync_success = sync_consultant_data_to_supabase(consultant_df, embeddings)
                     if sync_success:
-                        # Get the last 5 messages for context
                         last_5_messages = st.session_state.messages[-5:]
                         session_messages = " ".join(
                             [
@@ -143,7 +160,6 @@ def main():
                                 for msg in last_5_messages
                             ]
                         )
-                        # Use the LangGraph-based chat implementation
                         response = chat_with_consultant_database(
                             prompt, embeddings, consultant_df, session_messages
                         )

@@ -14,8 +14,8 @@ GEMINI_2_0_FLASH = "gemini-2.0-flash"
 # Pydantic model for query analysis
 class Criterion(BaseModel):
     """A single search criterion for consultant search."""
-    field: str = Field(description="The field to search on (e.g., 'finance', 'marketing', 'strategy', 'operations', 'entrepreneurship', 'industry')")
-    value: str = Field(description="The required value for this field (e.g., 'expertise', 'healthcare')")
+    field: str = Field(description="The field to search on (e.g., 'finance', 'marketing', 'strategy', 'operations', 'entrepreneurship', 'industry', 'availability')")
+    value: str = Field(description="The required value for this field (e.g., 'expertise', 'healthcare', 'available', etc)")
 
 class QueryAnalysis(BaseModel):
     """Analysis of a consultant database query to determine if it's criteria-based."""
@@ -55,10 +55,10 @@ def analyze_query(state: ConsultantQueryState) -> ConsultantQueryState:
     structured_llm = llm.with_structured_output(QueryAnalysis)
     
     query_analysis_prompt = f"""
-    Analyze this query about consultants and determine if it's asking for consultants matching multiple criteria.
+    Analyze this query about consultants and determine if it's asking for consultants matching multiple criter  ia.
     Query: "{state.query}"
     
-    Focus only on expertise fields (e.g., finance, marketing), industry expertise, and availability.
+    Focus only on expertise fields (e.g., finance, marketing), industry expertise (e.g., healthcare), and availability.
     For queries about 'expertise in [area]', treat [area] as the field (e.g., "finance", "marketing") and "expertise" as the value.
     
     Examples:
@@ -70,14 +70,18 @@ def analyze_query(state: ConsultantQueryState) -> ConsultantQueryState:
        - field: "operations", value: "expertise"
        - field: "strategy", value: "expertise"
 
-    3. "Looking for consultants skilled in operations and with experience in tech companies" should extract:
+    3. "Looking for consultants with PhDs and skilled in operations and with experience in tech companies" should extract:
        - field: "operations", value: "expertise"
        - field: "industry", value: "tech"
 
     4. "Who is available next month?" should extract:
        - field: "Consultant Availability Status", value: "available"
 
-    5. "Tell me about the consultant database" should NOT be a criteria search.
+    5. The following query should indicate is_criteria_search: False
+       - Tell me about the consultant database
+       - get me consultants who have PHD degree
+       - get me consultants who speak Spanish
+       - get me consultants who are based in New York
 
     6. "I need a consultant who is an expert in entrepreneurship and available immediately" should extract:
        - field: "entrepreneurship", value: "expertise"
@@ -220,7 +224,7 @@ def search_consultants(state: ConsultantQueryState, embeddings) -> ConsultantQue
                 [doc.page_content for doc in state.filtered_results]
             )
         else:
-            fallback_result = supabase.rpc("search_consultants", {
+            fallback_result = supabase.rpc("search_consultants_vector", {
                 "query_embedding": query_embedding,
                 "finance_filter": None,
                 "marketing_filter": None,
@@ -286,7 +290,7 @@ def generate_response(state: ConsultantQueryState) -> ConsultantQueryState:
     
     return state
 
-def chat_with_consultant_database(prompt, embeddings, df, model=GEMINI_2_0_FLASH):
+def chat_with_consultant_database(prompt, embeddings, consultant_df, session_messages, model=GEMINI_2_0_FLASH):
     """
     Chat with the consultant database with improved handling of column-based queries.
     This enhanced version uses LangGraph and structured outputs.
