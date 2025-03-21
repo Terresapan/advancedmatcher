@@ -1,14 +1,15 @@
 import os
 import streamlit as st
-from typing import List, Optional, Union, Dict
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 # Langchain and AI libraries
 from langchain_google_genai import ChatGoogleGenerativeAI 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain.docstore.document import Document
 from langsmith import traceable
 from langgraph.graph import END, StateGraph
+from langgraph.types import interrupt
+from langgraph.checkpoint.memory import MemorySaver
 from database import supabase
 
 # Import your functions
@@ -52,14 +53,27 @@ class ProjectRequirement(BaseModel):
 # State model for the LangGraph
 class ProjectConsultantState(BaseModel):
     """State for the project-consultant matching flow."""
-    query: str = ""
     project_text: str
     analysis: Optional[ProjectRequirement] = None
     project_summary: str = ""
+    requirements_approved: bool = False 
     consultant_matches: List = Field(default_factory=list)
     context: str = ""
     response: str = ""
     session_messages: str = ""
+
+    def dict(self):
+        """Convert the state to a dictionary."""
+        return {
+            "project_text": self.project_text,
+            "analysis": self.analysis,
+            "project_summary": self.project_summary,
+            "requirements_approved": self.requirements_approved,
+            "consultant_matches": self.consultant_matches,
+            "context": self.context,
+            "response": self.response,
+            "session_messages": self.session_messages
+        }
 
 # Initialize embeddings
 @st.cache_resource
@@ -78,7 +92,7 @@ def get_llm(model=GEMINI_2_0_FLASH, temperature=0):
         api_key=os.environ["GOOGLE_API_KEY"]
     )
 
-# Load consultant data
+# Helper function to load consultant data
 def process_uploaded_file(uploaded_file):
     """Process the uploaded file based on its type."""
     file_text = ""
@@ -93,23 +107,40 @@ def process_uploaded_file(uploaded_file):
     return file_text
 
 # Graph nodes
+# Function to analyze the project text
 def analyze_project(state: ProjectConsultantState) -> ProjectConsultantState:
     """Analyze the project text to extract structured information."""
-    text = clean_text(state.project_text)
-    max_length = 10000
-    if len(text) > max_length:
-        text = text[:max_length]
-    
+    from langgraph.types import interrupt
+
+    # Check if we're resuming after an interrupt
+    # If requirements_approved is True, we're resuming and should skip the analysis
+    if state.requirements_approved:
+        print("Resuming after interrupt with requirements_approved=True")
+        print(f"Using updated analysis: {state.analysis}")
+        return state
+
+    # Set a default project summary right away to ensure it's never empty
+    state.project_summary = "This project requires consultant expertise in various domains."
+
+    text = clean_text(state.project_text)[:10000]
+
     llm = get_llm(temperature=0)
-    
+
     # Generate project summary
     try:
         response = llm.invoke(PROJECT_SUMMARY_PROMPT.format(text=text))
-        state.project_summary = response.content
-        
+
+        # Check if response content is valid
+        if hasattr(response, 'content') and response.content and len(response.content.strip()) > 20:
+            state.project_summary = response.content
+
+        else:
+            st.warning("⚠️ Warning: Empty or short project summary generated. Using default summary.")
+            # Keep the default summary we set at the beginning
+
         # Create a structured output model for the LLM
         structured_llm = llm.with_structured_output(ProjectAnalysis)
-        
+
         # Extract structured information from the summary
         project_analysis_prompt = f"""
         Based on this project summary, extract structured information about the project requirements.
@@ -127,18 +158,42 @@ def analyze_project(state: ProjectConsultantState) -> ProjectConsultantState:
 
         For example, a requirement should look like: {{skill: "finance", importance: "high"}}
         """
-        
+
         project_analysis = structured_llm.invoke(project_analysis_prompt)
-        
+
         # Now extract project requirements from the analysis
-        project_requirement = extract_project_requirements(project_analysis)
-        state.analysis = project_requirement
-        
+        state.analysis = extract_project_requirements(project_analysis, state.project_summary)
+
     except Exception as e:
-        st.error(f"❌ Error analyzing project: {e}")
-    
+        print(f"Error analyzing project: {e}")
+        state.analysis = ProjectRequirement(
+            is_criteria_search=True,
+            criteria=[Criterion(field="strategy", value="expertise")]
+        )
+
+    # Use interrupt to pause for human review and approval
+    # This will pause execution and wait for human input
+    print("Interrupting for human approval of requirements")
+
+    # Return the current state for human review
+    # The workflow will pause here and wait for human input
+    interrupt(
+        {
+            "project_summary": state.project_summary,
+            "analysis": state.analysis,
+            "message": "Please review and approve the project requirements"
+        }
+    )
+
+    # When execution resumes, the state will have been updated with the approved requirements
+    # and requirements_approved flag set to True
+    print(f"Resuming after human approval. requirements_approved={state.requirements_approved}")
+    print(f"Updated analysis after resume: {state.analysis}")
+
     return state
 
+
+# Helper function to extract project requirements from the analysis
 def extract_project_requirements(project_analysis: ProjectAnalysis, project_summary: str) -> ProjectRequirement:
     """Extract project requirements from the project analysis."""
     # Initialize the ProjectRequirement object
@@ -260,96 +315,69 @@ def extract_project_requirements(project_analysis: ProjectAnalysis, project_summ
     
     return project_requirement
 
-def build_consultant_text(row):
-    """Build text data from a row of consultant data."""
-    return (f"Name: {row.get('Name', 'Unknown')}; "
-            f"Age: {row.get('Age', 'Unknown')}; "
-            f"Finance Expertise: {row.get('Finance Expertise', 'Unknown')}; "
-            f"Strategy Expertise: {row.get('Strategy Expertise', 'Unknown')}; "
-            f"Operations Expertise: {row.get('Operations Expertise', 'Unknown')}; "
-            f"Marketing Expertise: {row.get('Marketing Expertise', 'Unknown')}; "
-            f"Entrepreneurship Expertise: {row.get('Entrepreneurship Expertise', 'Unknown')}; "
-            f"Education: {row.get('Education', 'Unknown')}; "
-            f"Industry Expertise: {row.get('Industry Expertise', 'Unknown')}; "
-            f"Bio: {row.get('Bio', 'Unknown')}; "
-            f"Anticipated Availability Date: {row.get('Anticipated Availability Date', 'Unknown')}; "
-            f"Availability: {row.get('Availability', 'Unknown')};")
-
+# Graph nodes
+# Function to find matching consultants
 def find_matching_consultants(state: ProjectConsultantState, embeddings) -> ProjectConsultantState:
+    print("Entered find_matching_consultants")
+    print(f"State requirements_approved: {state.requirements_approved}")
+    print(f"State analysis: {state.analysis}")
     """Find the best consultant matches based on project summary and criteria."""
+    if state.analysis is None:
+        print("Warning: state.analysis is None, using default criteria")
+        state.analysis = ProjectRequirement(
+            is_criteria_search=True,
+            criteria=[Criterion(field="strategy", value="expertise")]
+        )
+
+    # Log the criteria being used for search
+    print(f"Using criteria for search: {[f'{c.field}: {c.value}' for c in state.analysis.criteria]}")
+
+    enhanced_summary = state.project_summary
+    query_embedding = embeddings.embed_query(enhanced_summary)
+    count_result = supabase.table('consultants').select('count', count='exact').execute()
+    total_consultants = count_result.count if hasattr(count_result, 'count') else 0
+
+    search_params = {
+        "query_embedding": query_embedding,
+        "finance_filter": False, "marketing_filter": False, "operations_filter": False,
+        "strategy_filter": False, "entrepreneurship_filter": False,
+        "industry_filter": None, "availability_filter": False, "limit_num": 3
+    }
+
+    # Apply the criteria from the state.analysis
+    for criterion in state.analysis.criteria:
+        field, value = criterion.field.lower(), criterion.value.lower()
+        print(f"Applying criterion: {field} = {value}")
+        if field in ["finance", "marketing", "operations", "strategy", "entrepreneurship"] and value == "expertise":
+            search_params[f"{field}_filter"] = True
+            print(f"Set {field}_filter to True")
+        elif field == "industry":
+            search_params["industry_filter"] = value
+            print(f"Set industry_filter to {value}")
+        elif field == "availability" and value == "available":
+            search_params["availability_filter"] = True
+            print(f"Set availability_filter to True")
+
     try:
-        # Create embedding for the project summary
-        query_embedding = embeddings.embed_query(state.project_summary)
-        
-        # Get the total count of consultants
-        count_result = supabase.table('consultants').select('count', count='exact').execute()
-        total_consultants = count_result.count if hasattr(count_result, 'count') else 0
-        
-        # Initialize search parameters with defaults
-        search_params = {
-            "query_embedding": query_embedding,
-            "finance_filter": False,
-            "marketing_filter": False,
-            "operations_filter": False,
-            "strategy_filter": False,
-            "entrepreneurship_filter": False,
-            "industry_filter": None,
-            "availability_filter": False,
-            "limit_num": 5
-        }
-        
-        # Update search parameters based on criteria
-        # This will always run since we ensure state.analysis has criteria
-        for criterion in state.analysis.criteria:
-            field = criterion.field.lower()
-            value = criterion.value.lower()
-            
-            if field in ["finance", "marketing", "operations", "strategy", "entrepreneurship"] and value == "expertise":
-                search_params[f"{field}_filter"] = True
-            elif field == "industry":
-                search_params["industry_filter"] = value
-            elif field == "availability" and value == "available":
-                search_params["availability_filter"] = True
-        
-        # Execute hybrid search
+        print(f"Executing search with params: {search_params}")
         result = supabase.rpc("search_consultants", search_params).execute()
-        
-        # Process results
         if result.data and len(result.data) > 0:
-            matches = process_matches(result.data, state.project_summary)
-            state.consultant_matches = matches
-            state.context = f"Found {len(matches)} consultants matching the project requirements out of {total_consultants} total consultants.\n\n"
+            state.consultant_matches = process_matches(result.data, state.project_summary)
+            state.context = f"Found {len(state.consultant_matches)} consultants...\n\nProject Summary:\n{state.project_summary}\n\nConsultant Matches:\n" + \
+                          "\n\n---\n\n".join([build_consultant_text(match) + f"\n\nMatch Analysis: {match['Match Analysis']}" for match in state.consultant_matches])
+            print(f"Found {len(state.consultant_matches)} matching consultants")
         else:
-            # Fallback to pure vector search if hybrid returns no results
-            fallback_result = supabase.rpc(
-                "search_consultants_vector", 
-                {
-                    "query_embedding": query_embedding,
-                    "limit_num": 5
-                }
-            ).execute()
-            
-            if fallback_result.data and len(fallback_result.data) > 0:
-                matches = process_matches(fallback_result.data, state.project_summary)
-                state.consultant_matches = matches
-                state.context = f"No consultants matched all specified criteria. Here are the closest matches by semantic similarity ({len(matches)} shown out of {total_consultants} total).\n\n"
-            else:
-                state.consultant_matches = []
-                state.context = "No matching consultants found in the database."
-        
-        # Add project summary and matches to context
-        if state.consultant_matches:
-            state.context += f"Project Summary:\n{state.project_summary}\n\n"
-            state.context += "Consultant Matches:\n" + "\n\n---\n\n".join(
-                [build_consultant_text(match) + f"\n\nMatch Analysis: {match['Match Analysis']}" for match in state.consultant_matches]
-            )
-            
+            print("No consultants matched all criteria, falling back to vector search")
+            fallback_result = supabase.rpc("search_consultants_vector", {"query_embedding": query_embedding, "limit_num": 3}).execute()
+            state.consultant_matches = process_matches(fallback_result.data, state.project_summary) if fallback_result.data else []
+            state.context = "No consultants matched all criteria..." if state.consultant_matches else "No matching consultants found."
     except Exception as e:
         st.error(f"❌ Error finding consultant matches: {e}")
-        state.context = f"Error finding consultant matches: {str(e)}"
-    
+        state.context = f"Error: {str(e)}"
+        print(f"Error in find_matching_consultants: {e}")
     return state
 
+# Helper function to process consultant data and add match analysis
 def process_matches(data, project_summary):
     """Process consultant data and add match analysis."""
     matches = []
@@ -376,8 +404,23 @@ def process_matches(data, project_summary):
     
     return matches
 
-# Analyze consultant match with AI
-@traceable()
+# Helper function to build consultant text
+def build_consultant_text(row):
+    """Build text data from a row of consultant data."""
+    return (f"Name: {row.get('Name', 'Unknown')}; "
+            f"Age: {row.get('Age', 'Unknown')}; "
+            f"Finance Expertise: {row.get('Finance Expertise', 'Unknown')}; "
+            f"Strategy Expertise: {row.get('Strategy Expertise', 'Unknown')}; "
+            f"Operations Expertise: {row.get('Operations Expertise', 'Unknown')}; "
+            f"Marketing Expertise: {row.get('Marketing Expertise', 'Unknown')}; "
+            f"Entrepreneurship Expertise: {row.get('Entrepreneurship Expertise', 'Unknown')}; "
+            f"Education: {row.get('Education', 'Unknown')}; "
+            f"Industry Expertise: {row.get('Industry Expertise', 'Unknown')}; "
+            f"Bio: {row.get('Bio', 'Unknown')}; "
+            f"Anticipated Availability Date: {row.get('Anticipated Availability Date', 'Unknown')}; "
+            f"Availability: {row.get('Availability', 'Unknown')};")
+
+# Helper function to analyze consultant match with AI
 def analyze_consultant_match(project_summary, consultant_details, prompt=CONSULTANT_MATCH_PROMPT):
     """Generate detailed analysis of consultant match"""
     llm = get_llm(temperature=0)
@@ -387,9 +430,13 @@ def analyze_consultant_match(project_summary, consultant_details, prompt=CONSULT
     except Exception as e:
         st.error(f"❌ Error analyzing consultant match: {e}")
         return "Unable to generate detailed match analysis."
-
+    
+# Graph nodes
+# Function to generate a response summarizing the consultant matches
 def generate_response(state: ProjectConsultantState) -> ProjectConsultantState:
     """Generate a response summarizing the consultant matches."""
+    print("Entered generate_response")
+    print(f"Consultant matches: {state.consultant_matches}")
     llm = get_llm(temperature=0)
     
     # Use the AI chat prompt template
@@ -399,12 +446,15 @@ def generate_response(state: ProjectConsultantState) -> ProjectConsultantState:
     
     Context:
     {state.context}
+
+    Consultant matches:
+    {state.consultant_matches}
     
     Recent conversation:
     {state.session_messages}
     
     IMPORTANT INSTRUCTIONS:
-    1. Summarize the project requirements first.
+    1. Do NOT summarize the project requirements, since you have done this step in the previous step.
     2. Provide a clear, concise summary of each consultant match, highlighting their strengths and potential limitations for this project.
     3. Rank the consultants in order of suitability for the project.
     4. If no consultants match exactly, explain why and suggest how the search could be improved.
@@ -416,83 +466,104 @@ def generate_response(state: ProjectConsultantState) -> ProjectConsultantState:
     
     return state
 
-def chat_with_project_consultant_matching(project_text, embeddings, session_messages=""):
-    """Chat interface for project-consultant matching using LangGraph."""
-    try:
-        # Get session messages if in Streamlit
-        if hasattr(st, 'session_state') and 'messages' in st.session_state:
-            session_messages = ' '.join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[-5:]])
-        
-        # Initialize the state
-        initial_state = ProjectConsultantState(
-            project_text=project_text,
-            session_messages=session_messages
-        )
-        
-        # Define the LangGraph
-        workflow = StateGraph(ProjectConsultantState)
-        
-        # Add nodes
-        workflow.add_node("analyze_project", analyze_project)
-        workflow.add_node("find_matching_consultants", lambda state: find_matching_consultants(state, embeddings))
-        workflow.add_node("generate_response", generate_response)
-        
-        # Add edges
-        workflow.add_edge("analyze_project", "find_matching_consultants")
-        workflow.add_edge("find_matching_consultants", "generate_response")
-        workflow.add_edge("generate_response", END)
-        
-        # Set the entry point
-        workflow.set_entry_point("analyze_project")
-        
-        # Compile the graph
-        app = workflow.compile()
-        
-        # Run the graph
-        result = app.invoke(initial_state)
-        
-        # In LangGraph, the result is a dictionary of the final state
-        # We need to access the response attribute from the state
-        if hasattr(result, 'response'):
-            return result.response
-        elif isinstance(result, dict) and 'state' in result and hasattr(result['state'], 'response'):
-            return result['state'].response
-        elif isinstance(result, dict) and 'response' in result:
-            return result['response']
-        else:
-            # Try to access the last node's output directly
-            nodes = list(result.keys())
-            if nodes and 'generate_response' in nodes:
-                return result['generate_response'].response
-            
-            # Fallback to returning a diagnostic message
-            return f"Project processed, but couldn't extract response. Result structure: {type(result)}"
-        
-    except Exception as e:
-        return f"Sorry, I encountered an unexpected error: {str(e)}"
 
-def generate_project_summary(project_text):
-    """Generate a summary of the project text using LLM.
+# Function to build the LangGraph workflow
+def build_project_consultant_workflow(embeddings):
+    """Build the LangGraph workflow for project-consultant matching."""
+
+    # Initialize the graph
+    workflow = StateGraph(ProjectConsultantState)
+
+    # Add nodes
+    workflow.add_node("analyze_project", analyze_project)
+    workflow.add_node("find_matching_consultants", lambda state: find_matching_consultants(state, embeddings))
+    workflow.add_node("generate_response", generate_response)
+
+    # Add conditional edges with a check for requirements_approved
+    workflow.add_conditional_edges(
+        "analyze_project",
+        lambda state: "find_matching_consultants" if state.requirements_approved else END,
+        {"find_matching_consultants": "find_matching_consultants", END: END}
+    )
+
+    # Add edges
+    workflow.add_edge("find_matching_consultants", "generate_response")
+    workflow.add_edge("generate_response", END)
+
+    # Set the entry point
+    workflow.set_entry_point("analyze_project")
+
+    # Create a memory checkpointer for the graph
+    checkpointer = MemorySaver()
+
+    # Compile the graph with the checkpointer
+    # This is required for interrupt to work
+    compiled = workflow.compile(checkpointer=checkpointer)
+
+    return compiled
+
+# Helper function to format criteria for display
+def format_criteria_for_display(criteria):
+    """Format criteria for display in the UI."""
+    expertise_fields = []
+    industry = None
+    availability = False
     
-    This function takes the raw project text, cleans it, and generates a concise summary
-    using the LLM with the PROJECT_SUMMARY_PROMPT.
+    # Handle case where criteria might be None
+    if criteria is None:
+        return {
+            "expertise": [],
+            "industry": None,
+            "availability": False
+        }
     
-    Args:
-        project_text: The raw text of the project document
-        
-    Returns:
-        A string containing the project summary
-    """
-    text = clean_text(project_text)
-    max_length = 10000
-    if len(text) > max_length:
-        text = text[:max_length]
+    for criterion in criteria:
+        if criterion.field.lower() in ["finance", "marketing", "operations", "strategy", "entrepreneurship"] and criterion.value.lower() == "expertise":
+            # Capitalize the field name to match the UI options
+            expertise_fields.append(criterion.field.capitalize())
+        elif criterion.field.lower() == "industry":
+            industry = criterion.value
+        elif criterion.field.lower() == "availability" and criterion.value.lower() == "available":
+            availability = True
     
-    llm = get_llm(temperature=0)
+    return {
+        "expertise": expertise_fields,
+        "industry": industry,
+        "availability": availability
+    }
+
+# Helper function to update criteria from user input
+def update_criteria_from_user_input(selected_expertise, industry_value, availability_value, additional_text):
+    """Update project requirements based on user input."""
+    criteria = []
     
-    try:
-        response = llm.invoke(PROJECT_SUMMARY_PROMPT.format(text=text))
-        return response.content
-    except Exception as e:
-        st.error(f"❌ Error generating project summary: {e}")
-        return "Unable to generate project summary due to an error."
+    # Add expertise criteria
+    for expertise in selected_expertise:
+        criteria.append(Criterion(field=expertise.lower(), value="expertise"))
+    
+    # Add industry criterion if provided
+    if industry_value and industry_value.strip():
+        # Clean up the industry value - remove any special characters and extra spaces
+        cleaned_industry = industry_value.lower().strip()
+        # If the industry contains multiple words, keep them but ensure it's clean
+        cleaned_industry = " ".join([word.strip() for word in cleaned_industry.split() if word.strip()])
+        criteria.append(Criterion(field="industry", value=cleaned_industry))
+    
+    # Add availability criterion if selected
+    if availability_value:
+        criteria.append(Criterion(field="availability", value="available"))
+    
+    # Ensure we have at least one criterion
+    if not criteria:
+        # Default to strategy as a fallback criterion
+        criteria.append(Criterion(field="strategy", value="expertise"))
+    
+    # Create the project requirement object
+    project_requirement = ProjectRequirement(
+        is_criteria_search=True,
+        criteria=criteria
+    )
+    
+    return project_requirement, additional_text
+
+
