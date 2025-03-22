@@ -4,14 +4,17 @@ from main import (
     get_embeddings,
     process_uploaded_file,
     build_project_consultant_workflow,
-    ProjectConsultantState,
     format_criteria_for_display,
     update_criteria_from_user_input,
+    ProjectConsultantState,
+    ProjectRequirement,
+    Criterion
 )
 from chat import chat_with_consultant_database
 from database import sync_consultant_data_to_supabase
 from utils import check_password, save_feedback, load_consultant_data
 from langgraph.types import Command
+import uuid
 
 
 # Set API keys from Streamlit secrets
@@ -33,7 +36,7 @@ def setup_sidebar():
         "This app helps you find suitable consultants for your project based on "
         "project description and consultant expertise."
     )
-    
+
     st.sidebar.write("### Instructions")
     st.sidebar.write(
         "1. :key: Enter password to access the app\n"
@@ -51,6 +54,7 @@ def setup_sidebar():
     st.sidebar.markdown(
         "[Terresa Pan's Agent Garden Link](https://ai-agents-garden.lovable.app/)"
     )
+    
     # Feedback section
     if 'feedback' not in st.session_state:
         st.session_state.feedback = ""
@@ -79,7 +83,6 @@ def setup_sidebar():
 
 def find_consultants_with_human_approval(file_text):
     """Process project document with human approval of requirements."""
-    from main import ProjectRequirement, Criterion
     embeddings = get_embeddings()
     workflow_app = build_project_consultant_workflow(embeddings=embeddings)
     initial_state = ProjectConsultantState(project_text=file_text, requirements_approved=False)
@@ -87,7 +90,6 @@ def find_consultants_with_human_approval(file_text):
     with st.spinner("⏳ Analyzing project document..."):
         # Create a unique thread ID for this session
         if 'thread_id' not in st.session_state:
-            import uuid
             st.session_state['thread_id'] = str(uuid.uuid4())
 
         thread_config = {"configurable": {"thread_id": st.session_state['thread_id']}}
