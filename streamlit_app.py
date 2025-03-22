@@ -43,7 +43,9 @@ def setup_sidebar():
     )
 
     st.sidebar.write("### 🎧 Listen to our Podcast for more insights")
-    st.sidebar.audio("assets/SmartMatch.mp3")
+    st.sidebar.markdown(
+        "[Interactive SmartMatch Staffing Platform Podcast Link](https://open.spotify.com/episode/1HA0LDPBgbQVzCkJilvKVe)"
+    )
 
     st.sidebar.write("### 🌎 Visit my AI Agent Projects Website")
     st.sidebar.markdown(
