@@ -1,5 +1,4 @@
 import streamlit as st
-from copy import deepcopy
 import os
 from main import (
     get_embeddings,
@@ -12,7 +11,6 @@ from main import (
 from chat import chat_with_consultant_database
 from database import sync_consultant_data_to_supabase
 from utils import check_password, save_feedback, load_consultant_data
-from langgraph.graph import END
 from langgraph.types import Command
 
 
@@ -44,8 +42,13 @@ def setup_sidebar():
         "4. :speech_balloon: Chat with our consultant database"
     )
 
-    # st.sidebar.write("### 🎧 Listen to our Podcast for more insights")
+    st.sidebar.write("### 🎧 Listen to our Podcast for more insights")
+    st.sidebar.audio("assets/SmartMatch.mp3")
 
+    st.sidebar.write("### 🌎 Visit my AI Agent Projects Website")
+    st.sidebar.markdown(
+        "[Terresa Pan's Agent Garden Link](https://ai-agents-garden.lovable.app/)"
+    )
     # Feedback section
     if 'feedback' not in st.session_state:
         st.session_state.feedback = ""
@@ -238,9 +241,6 @@ def main():
                             thread_config = {"configurable": {"thread_id": st.session_state['thread_id']}}
 
                             try:
-                                # Get the current state from the workflow
-                                current_state = workflow_app.get_state(thread_config)
-
                                 # Create a new state with the updated requirements
                                 # We need to preserve the original state structure but update specific fields
                                 # Always include project_summary and project_text to ensure they're not lost
@@ -309,53 +309,15 @@ def main():
                                     st.error("😔 No matching consultants found.")
                                     
                                 # Also display the AI-generated response if available
-                                # response = getattr(final_state, 'response', "")
-                                # if response:
-                                #     with st.expander("💡 AI Analysis of Matches"):
-                                #         st.write(response)
+                                response = getattr(final_state, 'response', "")
+                                if response:
+                                    with st.expander("💡 AI Analysis of Matches"):
+                                        st.write(response)
 
                             except Exception as e:
                                 st.error(f"Error resuming workflow: {e}")
                                 print(f"Error: {e}")
                                 st.write("An error occurred while processing your request.")
-            
-            # Display results if requirements have been approved
-            # elif st.session_state.file_processed and not st.session_state.requirements_editing and st.session_state.get('requirements_approved', False):
-            #     st.markdown("---")
-            #     state = st.session_state['project_state']
-                
-            #     st.subheader("Project Summary")
-            #     st.write(state.project_summary)
-            #     st.write("### Consultant Matches")
-                
-            #     # Get the consultant matches from the state
-            #     matches = getattr(state, 'consultant_matches', [])
-            #     st.session_state.current_matches = matches
-                
-            #     if matches:
-            #         st.write("🎯 **Best Matching Consultants**")
-            #         for i, consultant in enumerate(matches, 1):
-            #             with st.expander(f"👨‍💼 Consultant {i}: {consultant['Name']}"):
-            #                 cols = st.columns(2)
-            #                 with cols[0]:
-            #                     st.markdown(f"**👤 Age:** {consultant['Age']}")
-            #                     st.markdown(f"**🎓 Education:** {consultant['Education']}")
-            #                     st.markdown(f"**💼 Industry Expertise:** {consultant['Industry Expertise']}")
-            #                 with cols[1]:
-            #                     st.markdown(f"**📅 Availability:** {'Yes' if consultant['Availability'] else 'No'}")
-            #                     st.markdown(f"**📝 Bio:** {consultant['Bio']}")
-                            
-            #                 st.markdown("---")
-            #                 st.markdown("**🔍 Match Analysis:**")
-            #                 st.markdown(consultant['Match Analysis'])
-            #     else:
-            #         st.error("😔 No matching consultants found.")
-                    
-                # Also display the AI-generated response if available
-                # response = getattr(state, 'response', "")
-                # if response:
-                #     with st.expander("💡 AI Analysis of Matches"):
-                #         st.write(response)
 
                     
     else:  # Text Query tab

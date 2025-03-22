@@ -60,7 +60,6 @@ class ProjectConsultantState(BaseModel):
     consultant_matches: List = Field(default_factory=list)
     context: str = ""
     response: str = ""
-    session_messages: str = ""
 
     def dict(self):
         """Convert the state to a dictionary."""
@@ -72,7 +71,6 @@ class ProjectConsultantState(BaseModel):
             "consultant_matches": self.consultant_matches,
             "context": self.context,
             "response": self.response,
-            "session_messages": self.session_messages
         }
 
 # Initialize embeddings
@@ -110,7 +108,6 @@ def process_uploaded_file(uploaded_file):
 # Function to analyze the project text
 def analyze_project(state: ProjectConsultantState) -> ProjectConsultantState:
     """Analyze the project text to extract structured information."""
-    from langgraph.types import interrupt
 
     # Check if we're resuming after an interrupt
     # If requirements_approved is True, we're resuming and should skip the analysis
@@ -194,6 +191,7 @@ def analyze_project(state: ProjectConsultantState) -> ProjectConsultantState:
 
 
 # Helper function to extract project requirements from the analysis
+@traceable
 def extract_project_requirements(project_analysis: ProjectAnalysis, project_summary: str) -> ProjectRequirement:
     """Extract project requirements from the project analysis."""
     # Initialize the ProjectRequirement object
@@ -449,9 +447,6 @@ def generate_response(state: ProjectConsultantState) -> ProjectConsultantState:
 
     Consultant matches:
     {state.consultant_matches}
-    
-    Recent conversation:
-    {state.session_messages}
     
     IMPORTANT INSTRUCTIONS:
     1. Do NOT summarize the project requirements, since you have done this step in the previous step.
