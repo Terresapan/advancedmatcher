@@ -90,6 +90,20 @@ def clean_text(text):
     """Clean text by removing extra whitespace."""
     return re.sub(r'\s+', ' ', text).strip()
 
+# Helper function to load consultant data
+def process_uploaded_file(uploaded_file):
+    """Process the uploaded file based on its type."""
+    file_text = ""
+    if uploaded_file.type == "application/pdf":
+        file_text = extract_text_from_pdf(uploaded_file)
+    elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        file_text = extract_text_from_docx(uploaded_file)
+    elif uploaded_file.type == "text/plain":
+        file_text = extract_text_from_txt(uploaded_file)
+    else:
+        st.error("❌ Unsupported file type")
+    return file_text
+
 # Load consultant data from Google Sheets
 @st.cache_data(ttl=600)
 def load_consultant_data():
@@ -164,3 +178,5 @@ def load_consultant_data():
     except Exception as e:
         st.error(f"❌ Error loading consultant data: {e}")
         return None
+
+

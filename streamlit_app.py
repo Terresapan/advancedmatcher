@@ -2,17 +2,14 @@ import streamlit as st
 import os
 from main import (
     get_embeddings,
-    process_uploaded_file,
     build_project_consultant_workflow,
     format_criteria_for_display,
     update_criteria_from_user_input,
     ProjectConsultantState,
-    ProjectRequirement,
-    Criterion
 )
-from chat import chat_with_consultant_database
+from chat import chat_with_consultant_database, ConsultantQueryState
 from database import sync_consultant_data_to_supabase
-from utils import check_password, save_feedback, load_consultant_data
+from utils import check_password, save_feedback, load_consultant_data, process_uploaded_file
 from langgraph.types import Command
 import uuid
 
@@ -22,11 +19,11 @@ os.environ["GOOGLE_API_KEY"] = st.secrets["llmapikey"]["GOOGLE_API_KEY"]
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_API_KEY"] = st.secrets["tracing"]["LANGCHAIN_API_KEY"]
 os.environ["LANGCHAIN_ENDPOINT"]="https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "Project-Consultant-Matcher-test"
+os.environ["LANGCHAIN_PROJECT"] = "Project-Consultant-Matcher - Advanced Interaction"
 
 
 # Streamlit UI setup
-st.set_page_config(page_title="Interactive SmartMatch Staffing Platform", layout="wide", page_icon="🤝")
+st.set_page_config(page_title="Interactive SmartMatch Staffing Platform", layout="wide", page_icon="👐")
 
 # Setup sidebar with instructions and feedback form
 def setup_sidebar():
@@ -81,52 +78,6 @@ def setup_sidebar():
     st.sidebar.image("assets/bot01.jpg", use_container_width=True)
 
 
-def find_consultants_with_human_approval(file_text):
-    """Process project document with human approval of requirements."""
-    embeddings = get_embeddings()
-    workflow_app = build_project_consultant_workflow(embeddings=embeddings)
-    initial_state = ProjectConsultantState(project_text=file_text, requirements_approved=False)
-
-    with st.spinner("⏳ Analyzing project document..."):
-        # Create a unique thread ID for this session
-        if 'thread_id' not in st.session_state:
-            st.session_state['thread_id'] = str(uuid.uuid4())
-
-        thread_config = {"configurable": {"thread_id": st.session_state['thread_id']}}
-
-        # Invoke the workflow - it will run until the interrupt in analyze_project
-        result = workflow_app.invoke(initial_state, config=thread_config)
-
-        # Get the current state to access the interrupt information
-        state = workflow_app.get_state(thread_config)
-
-        if hasattr(state, 'tasks') and state.tasks and hasattr(state.tasks[0], 'interrupts'):
-            # We have an interrupt, extract the information
-            interrupt_info = state.tasks[0].interrupts[0].value if state.tasks[0].interrupts else None
-
-            if interrupt_info:
-                st.session_state['project_summary'] = interrupt_info.get('project_summary', "")
-                st.session_state['analysis'] = interrupt_info.get('analysis', None)
-        else:
-            # No interrupt, use the result directly
-            state = ProjectConsultantState(**result)
-            st.session_state['project_summary'] = state.project_summary
-            st.session_state['analysis'] = state.analysis
-
-    if not st.session_state.get('project_summary') or not st.session_state.get('analysis'):
-        st.warning("⚠️ Analysis failed to generate summary or requirements.")
-        st.session_state['project_summary'] = "This project requires consultant expertise in various domains."
-        st.session_state['analysis'] = ProjectRequirement(
-            is_criteria_search=True,
-            criteria=[Criterion(field="strategy", value="expertise")]
-        )
-
-    st.session_state['workflow_app'] = workflow_app
-    st.session_state.file_processed = True
-    st.session_state.requirements_editing = True
-    return st.session_state['project_summary'], st.session_state['analysis'], workflow_app
-
-
 def main():
     """Main application function."""
     setup_sidebar()
@@ -139,13 +90,14 @@ def main():
     # Initialize session state variables if not yet initialized
     if 'processed' not in st.session_state:
         st.session_state.processed = False
-        st.session_state.show_approval = False
         st.session_state.selected_expertise = []
         st.session_state.industry_value = ''
         st.session_state.availability_value = False
         st.session_state.additional_text = ''
         st.session_state.file_processed = False
         st.session_state.requirements_editing = False
+        st.session_state.thread_id = None
+        st.session_state.workflow_app = None
 
     # Create two tabs using radio buttons
     input_method = st.radio("Choose Input Method", ["📂 File Upload", "✍️ Text Query"], horizontal=True)
@@ -163,38 +115,55 @@ def main():
                         # Store the original text for later use
                         st.session_state['project_text'] = file_text
                         
-                        # Get the project summary, analysis, and workflow app
-                        project_summary, analysis, workflow_app = find_consultants_with_human_approval(file_text)
+                        # Initialize workflow
+                        embeddings = get_embeddings()
+                        workflow_app = build_project_consultant_workflow(embeddings=embeddings)
+                        initial_state = ProjectConsultantState(project_text=file_text, requirements_approved=False)
                         
-                        # Store the project summary and analysis in session state
-                        st.session_state['project_state'] = ProjectConsultantState(
-                            project_text=file_text,
-                            project_summary=project_summary,
-                            analysis=analysis,
-                            requirements_approved=False
-                        )
+                        # Set thread ID for state persistence
+                        if not st.session_state.thread_id:
+                            st.session_state.thread_id = str(uuid.uuid4())
+                        thread_config = {"configurable": {"thread_id": st.session_state.thread_id}}
                         
-                        # Initialize default values from extracted criteria
-                        if analysis is not None:
-                            formatted_criteria = format_criteria_for_display(analysis.criteria)
-                            all_expertise_fields = ["Finance", "Marketing", "Operations", "Strategy", "Entrepreneurship"]
-                            st.session_state.selected_expertise = [expertise.capitalize() for expertise in formatted_criteria["expertise"] 
-                                                                if expertise.capitalize() in all_expertise_fields]
-                            st.session_state.industry_value = formatted_criteria["industry"] if formatted_criteria["industry"] else ""
-                            st.session_state.availability_value = formatted_criteria["availability"]
-                    else:
-                        st.error("❌ Failed to process the uploaded file. Please check the file format and try again.")
+                        # Invoke workflow until interrupt
+                        workflow_app.invoke(initial_state, config=thread_config)
+                        state = workflow_app.get_state(thread_config)
+                        # print(f"Current Workflow state: {state}")
+
+                        # Check for interrupt from human_review
+                        if state and hasattr(state, 'tasks') and state.tasks:
+                            for task in state.tasks:
+                                if hasattr(task, 'interrupts') and task.interrupts:
+                                    interrupt_info = task.interrupts[0].value
+                                    st.session_state['project_summary'] = interrupt_info.get('project_summary', "")
+                                    st.session_state['analysis'] = interrupt_info.get('analysis', None)
+                                    
+                                    # Format the criteria for display
+                                    if st.session_state['analysis']:
+                                        formatted_criteria = format_criteria_for_display(st.session_state['analysis'].criteria)
+                                        st.session_state.selected_expertise = formatted_criteria['expertise']
+                                        st.session_state.industry_value = formatted_criteria['industry'] or ""
+                                        st.session_state.availability_value = formatted_criteria['availability']
+                                    
+                                    st.session_state.file_processed = True
+                                    st.session_state.requirements_editing = True
+                                    st.session_state.workflow_app = workflow_app
+                                    
+                                    # Force a rerun to display the requirements editing UI
+                                    st.rerun()
+                                    break
+                            else:
+                                st.error("❌ Failed to process the project analysis.")
+                        else:
+                            st.error("❌ Failed to process the project analysis.")
             
             # Display the requirements editing UI if file has been processed
             if st.session_state.file_processed and st.session_state.requirements_editing:
                 st.markdown("---")
-                state = st.session_state['project_state']
-                workflow_app = st.session_state['workflow_app']
-                
                 st.subheader("Project Summary")
-                st.write(state.project_summary)
+                st.write(st.session_state['project_summary'])
                 
-                if state.analysis is None:
+                if st.session_state['analysis'] is None:
                     st.error("❌ Error: Project analysis failed. Please try again.")
                 else:
                     st.write("### Extracted Expertise Requirements")
@@ -229,69 +198,46 @@ def main():
 
                     # Only find consultants when the button is clicked
                     if st.button("✅ Approve and Find Consultants"):
+                        # Show a spinner to indicate processing is happening
                         with st.spinner('🔍Finding the best consultant matches...'):
-                            # Get user inputs
+                            # Step 1: Update project requirements based on user input from session state
                             updated_requirements, additional_text = update_criteria_from_user_input(
-                                st.session_state.selected_expertise,
-                                st.session_state.industry_value,
-                                st.session_state.availability_value,
-                                st.session_state.additional_text
+                                st.session_state.selected_expertise,  # User's selected expertise
+                                st.session_state.industry_value,      # Selected industry
+                                st.session_state.availability_value,  # Consultant availability preference
+                                st.session_state.additional_text      # Any additional context provided
                             )
 
-                            # Get the workflow app from session state
-                            workflow_app = st.session_state['workflow_app']
+                            # Step 2: Prepare the state update dictionary for the workflow
+                            state_update = {
+                                    "analysis": updated_requirements,     # Updated project requirements
+                                    "requirements_approved": True,        # Mark requirements as approved
+                                    "project_summary": st.session_state['project_summary'],  # Original project summary
+                                    "project_text": st.session_state['project_text']        # Original project text
+                            }
+                            # Append additional context to summary and text if provided
+                            if additional_text.strip():
+                                state_update["project_summary"] += f"\n\nAdditional Context: {additional_text}"
+                                state_update["project_text"] += f"\n\nAdditional Context: {additional_text}"
 
-                            # Get the thread ID from session state
-                            thread_config = {"configurable": {"thread_id": st.session_state['thread_id']}}
-
+                            # Step 3: Resume the workflow with the updated requirements and context
                             try:
-                                # Create a new state with the updated requirements
-                                # We need to preserve the original state structure but update specific fields
-                                # Always include project_summary and project_text to ensure they're not lost
-                                original_summary = st.session_state.get('project_summary', "")
-                                original_text = st.session_state.get('project_text', "")
-                                
-                                state_update = {
-                                    "analysis": updated_requirements,
-                                    "requirements_approved": True,
-                                    "project_summary": original_summary,
-                                    "project_text": original_text
-                                }
-
-                                # Add additional context if provided
-                                if additional_text.strip():
-                                    # Update both project_summary and project_text to include additional context
-                                    state_update["project_summary"] = state_update["project_summary"] + f"\n\nAdditional Context: {additional_text}"
-                                    state_update["project_text"] = state_update["project_text"] + f"\n\nAdditional Context: {additional_text}"
-                                    
-                                    print(f"Added additional context: {additional_text}")
-
-                                # Debug print
-                                print("State update:", state_update)
+                                # Retrieve the workflow app and thread configuration from session state
+                                workflow_app = st.session_state['workflow_app']
+                                thread_config = {"configurable": {"thread_id": st.session_state['thread_id']}}
 
                                 # Resume the workflow with the updated state
-                                # Use Command to resume with the updated requirements
-                                final_result = workflow_app.invoke(
-                                    Command(resume=True, update=state_update),
-                                    config=thread_config
-                                )
-
-                                print("Workflow completed successfully")
-
-                                # Convert final_result to ProjectConsultantState if it's a dict
-                                if isinstance(final_result, dict):
-                                    final_state = ProjectConsultantState(**final_result)
-                                else:
-                                    final_state = final_result
-
-                                st.session_state['project_state'] = final_state
-                                st.session_state.requirements_approved = True
-
-                                st.write("### Consultant Matches")
+                                final_result = workflow_app.invoke(Command(resume=True, update=state_update), config=thread_config)
                                 
-                                # Get the consultant matches from the final state
-                                matches = getattr(final_state, 'consultant_matches', [])
-                                st.session_state.current_matches = matches
+                                # Step 4: Process the workflow result
+                                final_state = ProjectConsultantState(**final_result)  # Convert result to state object
+                                st.session_state['project_state'] = final_state       # Store final state
+                                st.session_state.requirements_approved = True         # Update approval status
+                                
+                                # Step 5: Display consultant matches
+                                st.write("### Consultant Matches")
+                                matches = final_state.consultant_matches  # Get list of matched consultants
+                                st.session_state.current_matches = matches  # Store matches in session state
                                 
                                 if matches:
                                     st.write("🎯 **Best Matching Consultants**")
@@ -313,7 +259,7 @@ def main():
                                     st.error("😔 No matching consultants found.")
                                     
                                 # Also display the AI-generated response if available
-                                response = getattr(final_state, 'response', "")
+                                response = final_state.response
                                 if response:
                                     with st.expander("💡 AI Analysis of Matches"):
                                         st.write(response)
@@ -358,16 +304,27 @@ def main():
                         )
                         try:
                             # Use the LangGraph-based chat implementation
-                            response = chat_with_consultant_database(
-                                prompt, embeddings, consultant_df, session_messages
+                            chatapp = chat_with_consultant_database(embeddings)
+                            initial_state = ConsultantQueryState(
+                                query=prompt,
+                                session_messages=session_messages                       
                             )
+                            final_state = chatapp.invoke(initial_state)
+                            # print(type(final_state)) ---- <class 'langgraph.pregel.io.AddableValuesDict'> it's a dict-like object but not a standard dict
+
+                            if isinstance(final_state, dict) and "response" in final_state:
+                                # Extract the response from the final state
+                                response = final_state["response"]
+                                st.markdown(response)  
+
+                            # We can also use the following line to extract the response
+                            # response = final_state.get("response", "I couldn't generate a response. Please try again.")
+                            # response = dict(final_state)["response"]
                             
-                            # Check if the response is empty or None
-                            if not response or response == "No response generated.":
-                                response = "I couldn't generate a specific response based on your query. Could you provide more details about what you're looking for in a consultant?"
-                                
-                            st.markdown(response)
+                            # however response = final_state.response does not work
+                            # st.markdown(response)                                                       
                             st.session_state.messages.append({"role": "assistant", "content": response})
+
                         except Exception as e:
                             error_msg = f"An error occurred while processing your request: {str(e)}"
                             st.error(error_msg)
