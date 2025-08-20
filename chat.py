@@ -11,7 +11,7 @@ from database import supabase
 from prompt import QUERY_ANALYSIS_PROMPT, GENERATE_CHAT_RESPONSE_PROMPT
 
 # Constants
-GEMINI_2_0_FLASH = "gemini-2.0-flash"
+GEMINI_FLASH = "gemini-2.5-flash"
 
 # -------------------
 # States Definition
@@ -44,10 +44,10 @@ class ConsultantQueryState(BaseModel):
 # -------------------
 # LLM Initialization
 # -------------------
-def get_llm(model=GEMINI_2_0_FLASH, temperature=0):
+def get_llm(model=GEMINI_FLASH, temperature=0):
     """Initialize and return the LLM based on the specified model."""    
     return ChatGoogleGenerativeAI(
-        model=GEMINI_2_0_FLASH,
+        model=GEMINI_FLASH,
         temperature=temperature,
         api_key=os.environ["GOOGLE_API_KEY"]
     )
