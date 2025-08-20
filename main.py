@@ -7,6 +7,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt
 from langsmith import traceable
+import asyncio
 
 # Import database, functions, prompts and states
 from database import supabase
@@ -23,6 +24,19 @@ GEMINI_2_0_FLASH = "gemini-2.0-flash"
     metadata={"embedding_model": "google/models/text-embedding-004"},
 )
 def get_embeddings():
+    """
+    Initializes and returns the Google Generative AI Embeddings model,
+    ensuring an asyncio event loop is available.
+    """
+    try:
+        # Check if an event loop is already running
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # If not, create a new one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    # Now, the initialization will work correctly
     return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
 # Function to initialize the LLM
